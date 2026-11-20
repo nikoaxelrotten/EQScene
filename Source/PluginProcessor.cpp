@@ -6,21 +6,7 @@ EQSceneProcessor::EQSceneProcessor()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createLayout())
-{ 
-if (buffer.getNumChannels() > 0)
-    {
-        auto* data = buffer.getWritePointer (0);
-        for (auto& f : filtersL)
-            for (int i = 0; i < n; ++i)
-                data[i] = f.processSingleSampleRaw (data[i]);
-    }
-
-    if (buffer.getNumChannels() > 1)
-    {
-        auto* data = buffer.getWritePointer (1);
-        for (auto& f : filtersR)
-            for (int i = 0; i < n; ++i)
-                data[i] = f.processSingleSampleRaw (data[i]);
+{
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout EQSceneProcessor::createLayout()
@@ -116,14 +102,16 @@ void EQSceneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     {
         auto* data = buffer.getWritePointer (0);
         for (auto& f : filtersL)
-            f.processSamples (data, n);
+            for (int i = 0; i < n; ++i)
+                data[i] = f.processSingleSampleRaw (data[i]);
     }
 
     if (buffer.getNumChannels() > 1)
     {
         auto* data = buffer.getWritePointer (1);
         for (auto& f : filtersR)
-            f.processSamples (data, n);
+            for (int i = 0; i < n; ++i)
+                data[i] = f.processSingleSampleRaw (data[i]);
     }
 
     buffer.applyGain (juce::Decibels::decibelsToGain (getParam ("out")));
