@@ -103,7 +103,7 @@ void EQSceneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         auto* data = buffer.getWritePointer (0);
         for (auto& f : filtersL)
             for (int i = 0; i < n; ++i)
-                data[i] = f.processSingleSampleRaw (data[i]);
+                data[i] = f.processSample (data[i]);
     }
 
     if (buffer.getNumChannels() > 1)
@@ -111,7 +111,7 @@ void EQSceneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         auto* data = buffer.getWritePointer (1);
         for (auto& f : filtersR)
             for (int i = 0; i < n; ++i)
-                data[i] = f.processSingleSampleRaw (data[i]);
+                data[i] = f.processSample (data[i]);
     }
 
     buffer.applyGain (juce::Decibels::decibelsToGain (getParam ("out")));
