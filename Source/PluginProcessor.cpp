@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
+
 EQSceneProcessor::EQSceneProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -94,27 +96,45 @@ void EQSceneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     for (int ch = 2; ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
+    const int n = buffer.getNumSamples();
+    const int numCh = juce::jmin (2, buffer.getNumChannels());
+    if (numCh == 0)
+        return;
+
     updateFilters();
 
-    const int n = buffer.getNumSamples();
-
-    if (buffer.getNumChannels() > 0)
+    // Input spectrum (mono mix of the signal before the EQ)
+    for (int i = 0; i < n; ++i)
     {
-        auto* data = buffer.getWritePointer (0);
-        for (auto& f : filtersL)
-            for (int i = 0; i < n; ++i)
-                data[i] = f.processSample (data[i]);
+        float s = buffer.getSample (0, i);
+        if (numCh > 1)
+            s = 0.5f * (s + buffer.getSample (1, i));
+        inAnalyzer.pushSample (s);
     }
 
-    if (buffer.getNumChannels() > 1)
+    auto* left = buffer.getWritePointer (0);
+    for (auto& f : filtersL)
+        for (int i = 0; i < n; ++i)
+            left[i] = f.processSample (left[i]);
+
+    if (numCh > 1)
     {
-        auto* data = buffer.getWritePointer (1);
+        auto* right = buffer.getWritePointer (1);
         for (auto& f : filtersR)
             for (int i = 0; i < n; ++i)
-                data[i] = f.processSample (data[i]);
+                right[i] = f.processSample (right[i]);
     }
 
     buffer.applyGain (juce::Decibels::decibelsToGain (getParam ("out")));
+
+    // Output spectrum (mono mix of the signal after the EQ)
+    for (int i = 0; i < n; ++i)
+    {
+        float s = buffer.getSample (0, i);
+        if (numCh > 1)
+            s = 0.5f * (s + buffer.getSample (1, i));
+        outAnalyzer.pushSample (s);
+    }
 }
 
 juce::AudioProcessorEditor* EQSceneProcessor::createEditor()
