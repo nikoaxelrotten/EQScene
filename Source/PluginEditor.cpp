@@ -1,5 +1,8 @@
 #include "PluginEditor.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace
 {
     constexpr float minFreq = 20.0f;
@@ -183,8 +186,8 @@ void EQSceneEditor::paint (juce::Graphics& g)
         const float x2 = freqToX (z.f2, area);
         const auto c = juce::Colour (z.colour);
 
-        juce::ColourGradient grad (c.withAlpha(0.55f), 0.0f, area.getY(),
-                                   c.withAlpha(0.0f), 0.0f, area.getBottom(), false);
+        juce::ColourGradient grad (c.withAlpha (0.55f), 0.0f, area.getY(),
+                                   c.withAlpha (0.0f), 0.0f, area.getBottom(), false);
         g.setGradientFill (grad);
         g.fillRect (juce::Rectangle<float> (x1, area.getY(), x2 - x1, area.getHeight()));
 
@@ -199,7 +202,7 @@ void EQSceneEditor::paint (juce::Graphics& g)
     for (float db = -18.0f; db <= 18.0f; db += 6.0f)
         g.drawHorizontalLine ((int) gainToY (db, area), area.getX(), area.getRight());
 
-    const float gridFreqs[] = { 50, 100, 200, 500, 1000, 2000, 5000, 10000 };
+    const float gridFreqs[] = { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f };
     for (auto f : gridFreqs)
         g.drawVerticalLine ((int) freqToX (f, area), area.getY(), area.getBottom());
 
@@ -207,7 +210,7 @@ void EQSceneEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colours::white.withAlpha (0.25f));
     g.drawHorizontalLine ((int) gainToY (0.0f, area), area.getX(), area.getRight());
 
-    // Build coefficients for the current parameters
+    // Coefficients for the current parameters
     const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
     std::array<juce::dsp::IIR::Coefficients<float>::Ptr, eqs::numBands> coefs;
     for (int b = 0; b < eqs::numBands; ++b)
@@ -227,10 +230,13 @@ void EQSceneEditor::paint (juce::Graphics& g)
 
         float db = 0.0f;
         for (auto& c : coefs)
-            db += 20.0f * std::log10 (juce::jmax (1.0e-6f, c->getMagnitudeForFrequency (f, sr)));
+        {
+            const float mag = c->getMagnitudeForFrequency (f, sr);
+            db += 20.0f * std::log10 (std::max (mag, 1.0e-6f));
+        }
 
         const float x = freqToX (f, area);
-        const float y = juce::jlimit (area.getY(), area.getBottom(), gainToY (db, area));
+        const float y = std::clamp (gainToY (db, area), area.getY(), area.getBottom());
 
         if (i == 0) curve.startNewSubPath (x, y);
         else        curve.lineTo (x, y);
@@ -270,11 +276,12 @@ void EQSceneEditor::paint (juce::Graphics& g)
             g.drawEllipse (p.x - 9.0f, p.y - 9.0f, 18.0f, 18.0f, 1.5f);
         }
 
-        g.setColour (juce::Colours::white.withAlpha (0.8f));
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
         const juce::String label = (b == eqs::lowCut) ? juce::String ("LC")
                                  : (b == eqs::highShelf) ? juce::String ("HS")
                                  : juce::String (b);
+
+        g.setColour (juce::Colours::white.withAlpha (0.8f));
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
         g.drawText (label,
                     juce::Rectangle<float> (p.x - 12.0f, p.y - 26.0f, 24.0f, 12.0f),
                     juce::Justification::centred, false);
@@ -334,12 +341,12 @@ void EQSceneEditor::mouseDrag (const juce::MouseEvent& e)
     const auto r = graphBounds();
     const int b = draggedBand;
 
-    const float freq = juce::jlimit (minFreq, maxFreq, xToFreq (e.position.x, r));
+    const float freq = std::clamp (xToFreq (e.position.x, r), minFreq, maxFreq);
     setParamValue (eqs::pid (b, "freq"), freq);
 
     if (b != eqs::lowCut)
     {
-        const float gain = juce::jlimit (-maxDb, maxDb, yToGain (e.position.y, r));
+        const float gain = std::clamp (yToGain (e.position.y, r), -maxDb, maxDb);
         setParamValue (eqs::pid (b, "gain"), gain);
     }
 
@@ -364,6 +371,6 @@ void EQSceneEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::Mouse
     const auto id = eqs::pid (b, "q");
     const float q = getParam (id);
     const float factor = std::pow (2.0f, wheel.deltaY * 2.0f);
-    setParamValue (id, juce::jlimit (0.1f, 10.0f, q * factor));
+    setParamValue (id, std::clamp (q * factor, 0.1f, 10.0f));
     repaint();
 }
