@@ -2,6 +2,15 @@
 
 #include "PluginProcessor.h"
 
+// Draws the rotary knobs in the style of the reference image.
+class KnobLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+                           float sliderPosProportional, float rotaryStartAngle,
+                           float rotaryEndAngle, juce::Slider& slider) override;
+};
+
 class EQSceneEditor : public juce::AudioProcessorEditor,
                       private juce::Timer
 {
@@ -12,6 +21,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -26,8 +37,12 @@ private:
     void setParamValue (const juce::String& id, float value);
     void beginGesture (int band, bool begin);
     float getParam (const juce::String& id) const;
+    juce::String describeBand (int band) const;
 
     EQSceneProcessor& proc;
+
+    // Declared before the knobs so it is destroyed after them
+    KnobLookAndFeel knobLook;
 
     struct BandUI
     {
@@ -41,7 +56,12 @@ private:
     juce::Slider sOut;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> aOut;
 
+    juce::TextButton inButton, outButton;
+    bool showIn = true;
+    bool showOut = true;
+
     int draggedBand = -1;
+    int hoverBand = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EQSceneEditor)
 };
