@@ -38,6 +38,7 @@ private:
     void beginGesture (int band, bool begin);
     float getParam (const juce::String& id) const;
     juce::String describeBand (int band) const;
+    std::array<float, eqs::numZones> zoneDeviations (double sr) const;
 
     EQSceneProcessor& proc;
 
@@ -59,6 +60,9 @@ private:
     juce::TextButton inButton, outButton;
     bool showIn = true;
     bool showOut = true;
+
+    juce::ComboBox instrumentBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> aInstrument;
 
     int draggedBand = -1;
     int hoverBand = -1;
