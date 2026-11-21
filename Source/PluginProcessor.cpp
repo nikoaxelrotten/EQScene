@@ -3,6 +3,48 @@
 
 #include <algorithm>
 
+namespace
+{
+    juce::String freqText (float f)
+    {
+        if (f >= 1000.0f)
+            return juce::String ((double) f / 1000.0, 1) + " kHz";
+
+        return juce::String (juce::roundToInt (f)) + " Hz";
+    }
+
+    float freqValue (const juce::String& text)
+    {
+        auto t = text.trim().toLowerCase();
+        float v = t.getFloatValue();
+
+        if (t.contains ("k"))
+            v *= 1000.0f;
+
+        return v;
+    }
+
+    juce::String dbText (float v)
+    {
+        return (v > 0.0f ? "+" : "") + juce::String ((double) v, 1) + " dB";
+    }
+
+    float dbValue (const juce::String& text)
+    {
+        return text.retainCharacters ("-+0123456789.").getFloatValue();
+    }
+
+    juce::String qText (float v)
+    {
+        return juce::String ((double) v, 2);
+    }
+
+    float qValue (const juce::String& text)
+    {
+        return text.getFloatValue();
+    }
+}
+
 EQSceneProcessor::EQSceneProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -15,45 +57,61 @@ juce::AudioProcessorValueTreeState::ParameterLayout EQSceneProcessor::createLayo
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // Low cut (high-pass)
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { eqs::pid (eqs::lowCut, "freq"), 1 }, "Low Cut Freq",
-        juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.3f), 30.0f, "Hz"));
+    // Attributes define how each value is written, so the knobs and text boxes show clean numbers
+    const auto freqAttr = juce::AudioParameterFloatAttributes()
+                              .withStringFromValueFunction ([] (float v, int) { return freqText (v); })
+                              .withValueFromStringFunction (freqValue);
+    const auto dbAttr = juce::AudioParameterFloatAttributes()
+                            .withStringFromValueFunction ([] (float v, int) { return dbText (v); })
+                            .withValueFromStringFunction (dbValue);
+    const auto qAttr = juce::AudioParameterFloatAttributes()
+                           .withStringFromValueFunction ([] (float v, int) { return qText (v); })
+                           .withValueFromStringFunction (qValue);
+
+    auto addFloat = [&params] (const juce::String& id, const juce::String& name,
+                               juce::NormalisableRange<float> range, float def,
+                               const juce::AudioParameterFloatAttributes& attr)
+    {
+        params.push_back (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name, range, def, attr));
+    };
+
+    // Low cut
+    addFloat (eqs::pid (eqs::lowCut, "freq"), "Low Cut Freq",
+              juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.3f), 30.0f, freqAttr);
 
     // Four bells
     const float bellDefaults[] = { 300.0f, 400.0f, 1500.0f, 5000.0f };
     for (int b = 1; b <= 4; ++b)
     {
-        params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { eqs::pid (b, "freq"), 1 }, "Bell " + juce::String (b) + " Freq",
-            juce::NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.3f), bellDefaults[b - 1], "Hz"));
-
-        params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { eqs::pid (b, "gain"), 1 }, "Bell " + juce::String (b) + " Gain",
-            juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f, "dB"));
-
-        params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { eqs::pid (b, "q"), 1 }, "Bell " + juce::String (b) + " Q",
-            juce::NormalisableRange<float> (0.1f, 10.0f, 0.0f, 0.5f), 1.0f));
+        const juce::String n = juce::String (b);
+        addFloat (eqs::pid (b, "freq"), "Bell " + n + " Freq",
+                  juce::NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.3f), bellDefaults[b - 1], freqAttr);
+        addFloat (eqs::pid (b, "gain"), "Bell " + n + " Gain",
+                  juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f, dbAttr);
+        addFloat (eqs::pid (b, "q"), "Bell " + n + " Q",
+                  juce::NormalisableRange<float> (0.1f, 10.0f, 0.0f, 0.5f), 1.0f, qAttr);
     }
 
     // High shelf
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { eqs::pid (eqs::highShelf, "freq"), 1 }, "High Shelf Freq",
-        juce::NormalisableRange<float> (1000.0f, 20000.0f, 0.0f, 0.3f), 10000.0f, "Hz"));
-
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { eqs::pid (eqs::highShelf, "gain"), 1 }, "High Shelf Gain",
-        juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f, "dB"));
-
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { eqs::pid (eqs::highShelf, "q"), 1 }, "High Shelf Q",
-        juce::NormalisableRange<float> (0.1f, 2.0f), 0.707f));
+    addFloat (eqs::pid (eqs::highShelf, "freq"), "High Shelf Freq",
+              juce::NormalisableRange<float> (1000.0f, 20000.0f, 0.0f, 0.3f), 10000.0f, freqAttr);
+    addFloat (eqs::pid (eqs::highShelf, "gain"), "High Shelf Gain",
+              juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f, dbAttr);
+    addFloat (eqs::pid (eqs::highShelf, "q"), "High Shelf Q",
+              juce::NormalisableRange<float> (0.1f, 2.0f), 0.707f, qAttr);
 
     // Output
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "out", 1 }, "Output",
-        juce::NormalisableRange<float> (-24.0f, 24.0f), 0.0f, "dB"));
+    addFloat ("out", "Output",
+              juce::NormalisableRange<float> (-24.0f, 24.0f), 0.0f, dbAttr);
+
+    // Instrument used for the suggestions (does not change the EQ itself)
+    juce::StringArray instrumentNames;
+    for (const auto& ins : eqs::instruments)
+        instrumentNames.add (ins.name);
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "instrument", 1 }, "Instrument", instrumentNames, 0));
 
     return { params.begin(), params.end() };
 }
