@@ -29,7 +29,7 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;
 
     juce::Rectangle<float> graphBounds() const;
     juce::Point<float> nodePosition (int band) const;
@@ -38,7 +38,8 @@ private:
     void beginGesture (int band, bool begin);
     float getParam (const juce::String& id) const;
     juce::String describeBand (int band) const;
-    std::array<float, eqs::numZones> zoneDeviations (double sr) const;
+    juce::String summaryLine (const std::array<float, eqs::numZones>& devs, bool silent) const;
+    std::array<float, eqs::numZones> zoneDeviations (double sr, bool& silent) const;
 
     EQSceneProcessor& proc;
 
@@ -58,11 +59,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> aOut;
 
     juce::TextButton inButton, outButton;
+    std::array<juce::TextButton, 6> instrumentButtons; // one per entry in eqs::instruments
     bool showIn = true;
     bool showOut = true;
-
-    juce::ComboBox instrumentBox;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> aInstrument;
 
     int draggedBand = -1;
     int hoverBand = -1;
