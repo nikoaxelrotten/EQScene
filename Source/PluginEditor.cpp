@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace
 {
     constexpr float minFreq = 20.0f;
     constexpr float maxFreq = 20000.0f;
     constexpr float maxDb = 18.0f;
+    constexpr float adviceThreshold = 1.5f;
 
     const juce::Colour bandColours[eqs::numBands] = {
         juce::Colour (0xff9aa4b2), // low cut
@@ -30,6 +32,7 @@ namespace
         { "Dureza",           "4-8 kHz",    4000.0f,  8000.0f,  0xff7a1d4d },
         { "Aire",             "8-16 kHz",   8000.0f,  16000.0f, 0xff3a3a8a },
     };
+    static_assert (sizeof (zones) / sizeof (zones[0]) == eqs::numZones, "zone count mismatch");
 
     float freqToX (float f, juce::Rectangle<float> r)
     {
@@ -57,6 +60,31 @@ namespace
             return juce::String ((double) f / 1000.0, 1) + " kHz";
 
         return juce::String ((double) std::round (f), 0) + " Hz";
+    }
+
+    int zoneOf (float f)
+    {
+        for (int z = 0; z < eqs::numZones; ++z)
+            if (f >= zones[z].f1 && f < zones[z].f2)
+                return z;
+
+        return f < zones[0].f1 ? 0 : eqs::numZones - 1;
+    }
+
+    // "1.5 dB", "3.0 dB", capped at 6 dB, rounded to half dB
+    juce::String amountText (float absDb)
+    {
+        const float amount = juce::jmin (6.0f, std::round (absDb * 2.0f) / 2.0f);
+        return juce::String ((double) amount, 1) + " dB";
+    }
+
+    // Status of one zone: "bien", "sobra 3.0 dB" or "falta 2.0 dB"
+    juce::String zoneStatus (float dev)
+    {
+        if (std::abs (dev) < adviceThreshold)
+            return "bien";
+
+        return juce::String (dev > 0.0f ? "sobra " : "falta ") + amountText (std::abs (dev));
     }
 
     // Point on a circle, with 0 radians at the top, clockwise like JUCE knobs
@@ -151,19 +179,6 @@ EQSceneEditor::EQSceneEditor (EQSceneProcessor& p)
         s.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     };
 
-    auto useFreqText = [] (juce::Slider& s)
-    {
-        s.textFromValueFunction = [] (double v) { return formatFreq ((float) v); };
-        s.valueFromTextFunction = [] (const juce::String& t)
-        {
-            auto text = t.trim();
-            double v = text.getDoubleValue();
-            if (text.containsIgnoreCase ("k"))
-                v *= 1000.0;
-            return v;
-        };
-    };
-
     for (int b = 0; b < eqs::numBands; ++b)
     {
         auto& ui = bandUI[(size_t) b];
@@ -175,7 +190,6 @@ EQSceneEditor::EQSceneEditor (EQSceneProcessor& p)
         addAndMakeVisible (ui.title);
 
         setupKnob (ui.sFreq, colour);
-        useFreqText (ui.sFreq);
         addAndMakeVisible (ui.sFreq);
         ui.aFreq = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
             proc.apvts, eqs::pid (b, "freq"), ui.sFreq);
@@ -183,14 +197,11 @@ EQSceneEditor::EQSceneEditor (EQSceneProcessor& p)
         if (b != eqs::lowCut)
         {
             setupKnob (ui.sGain, colour);
-            ui.sGain.setNumDecimalPlacesToDisplay (1);
-            ui.sGain.setTextValueSuffix (" dB");
             addAndMakeVisible (ui.sGain);
             ui.aGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                 proc.apvts, eqs::pid (b, "gain"), ui.sGain);
 
             setupKnob (ui.sQ, colour);
-            ui.sQ.setNumDecimalPlacesToDisplay (2);
             addAndMakeVisible (ui.sQ);
             ui.aQ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                 proc.apvts, eqs::pid (b, "q"), ui.sQ);
@@ -203,8 +214,6 @@ EQSceneEditor::EQSceneEditor (EQSceneProcessor& p)
     addAndMakeVisible (outTitle);
 
     setupKnob (sOut, juce::Colours::white);
-    sOut.setNumDecimalPlacesToDisplay (1);
-    sOut.setTextValueSuffix (" dB");
     addAndMakeVisible (sOut);
     aOut = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         proc.apvts, "out", sOut);
@@ -221,6 +230,17 @@ EQSceneEditor::EQSceneEditor (EQSceneProcessor& p)
     outButton.onClick = [this] { showOut = outButton.getToggleState(); repaint(); };
     addAndMakeVisible (outButton);
 
+    // Instrument buttons: one click sets the instrument used for the advice
+    for (int i = 0; i < (int) instrumentButtons.size() && i < (int) eqs::instruments.size(); ++i)
+    {
+        auto& btn = instrumentButtons[(size_t) i];
+        btn.setButtonText (eqs::instruments[(size_t) i].name);
+        btn.setClickingTogglesState (true);
+        btn.setRadioGroupId (1);
+        btn.onClick = [this, i] { setParamValue ("instrument", (float) i); repaint(); };
+        addAndMakeVisible (btn);
+    }
+
     startTimerHz (30);
 }
 
@@ -235,6 +255,16 @@ EQSceneEditor::~EQSceneEditor()
         ui.sQ.setLookAndFeel (nullptr);
     }
     sOut.setLookAndFeel (nullptr);
+}
+
+void EQSceneEditor::timerCallback()
+{
+    // Keep the instrument buttons in sync with the parameter (also when changed by the host)
+    const int current = juce::roundToInt (getParam ("instrument"));
+    for (int i = 0; i < (int) instrumentButtons.size(); ++i)
+        instrumentButtons[(size_t) i].setToggleState (i == current, juce::dontSendNotification);
+
+    repaint();
 }
 
 float EQSceneEditor::getParam (const juce::String& id) const
@@ -291,25 +321,110 @@ void EQSceneEditor::beginGesture (int band, bool begin)
     }
 }
 
+// Compares the input spectrum with the instrument profile.
+// Per zone: positive = too loud for this instrument, negative = too quiet.
+// 'silent' is true when there is no signal to analyse.
+std::array<float, eqs::numZones> EQSceneEditor::zoneDeviations (double sr, bool& silent) const
+{
+    std::array<float, eqs::numZones> dev {};
+    silent = true;
+
+    std::array<float, SpectrumAnalyzer::numBins> spec {};
+    proc.inAnalyzer.copyMagnitudes (spec);
+
+    std::array<float, eqs::numZones> avg {};
+    for (int z = 0; z < eqs::numZones; ++z)
+    {
+        float sum = 0.0f;
+        int count = 0;
+
+        for (int bin = 1; bin < SpectrumAnalyzer::numBins; ++bin)
+        {
+            const float f = (float) bin * (float) sr / (float) SpectrumAnalyzer::fftSize;
+            if (f >= zones[z].f1 && f < zones[z].f2)
+            {
+                sum += spec[(size_t) bin];
+                ++count;
+            }
+        }
+
+        avg[(size_t) z] = count > 0 ? sum / (float) count : -120.0f;
+    }
+
+    float mean = 0.0f;
+    for (auto v : avg)
+        mean += v;
+    mean /= (float) eqs::numZones;
+
+    if (mean < -80.0f)
+        return dev;
+
+    silent = false;
+
+    const int inst = juce::jlimit (0, (int) eqs::instruments.size() - 1,
+                                   juce::roundToInt (getParam ("instrument")));
+    const auto& target = eqs::instruments[(size_t) inst].target;
+
+    for (int z = 0; z < eqs::numZones; ++z)
+        dev[(size_t) z] = (avg[(size_t) z] - mean) - target[(size_t) z];
+
+    return dev;
+}
+
+// Text for the bar under the graph: the two biggest problems, with what to do
+juce::String EQSceneEditor::summaryLine (const std::array<float, eqs::numZones>& devs, bool silent) const
+{
+    if (silent)
+        return "Reproduce audio para recibir sugerencias";
+
+    struct Item { int z; float d; };
+    std::vector<Item> items;
+
+    for (int z = 0; z < eqs::numZones; ++z)
+        if (std::abs (devs[(size_t) z]) >= adviceThreshold)
+            items.push_back ({ z, devs[(size_t) z] });
+
+    if (items.empty())
+        return "Sin desvios grandes para este instrumento";
+
+    std::sort (items.begin(), items.end(), [] (const Item& a, const Item& b)
+    {
+        return std::abs (a.d) > std::abs (b.d);
+    });
+
+    juce::String out = "Sugerencia: ";
+    const int count = juce::jmin (2, (int) items.size());
+
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& it = items[(size_t) i];
+        if (i > 0)
+            out += ", ";
+
+        out += (it.d > 0.0f ? "baja " : "sube ");
+        out += juce::String (zones[it.z].name) + " " + amountText (std::abs (it.d));
+    }
+
+    return out;
+}
+
 juce::String EQSceneEditor::describeBand (int b) const
 {
     const float freq = getParam (eqs::pid (b, "freq"));
     const juce::String where = formatFreq (freq);
 
     if (b == eqs::lowCut)
-        return "Corta por debajo de " + where;
+        return "Low cut en " + where + ": quita graves si no aportan";
 
-    const float gain = getParam (eqs::pid (b, "gain"));
-    if (std::abs (gain) < 0.05f)
-        return "Sin cambio en " + where + ". Sube o baja para corregir";
+    bool silent = true;
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+    const auto devs = zoneDeviations (sr, silent);
 
-    const juce::String verb = gain > 0.0f ? "Sube " : "Baja ";
-    const juce::String amount = juce::String ((double) std::abs (gain), 1) + " dB";
+    if (silent)
+        return "Reproduce audio para ver el analisis";
 
-    if (b == eqs::highShelf)
-        return verb + amount + " los agudos desde " + where;
-
-    return verb + amount + " en " + where;
+    const int z = zoneOf (freq);
+    return juce::String (zones[z].name) + " (" + where + "): " + zoneStatus (devs[(size_t) z]);
 }
 
 void EQSceneEditor::paint (juce::Graphics& g)
@@ -317,18 +432,22 @@ void EQSceneEditor::paint (juce::Graphics& g)
     g.fillAll (juce::Colour (0xff0d0f14));
 
     const auto area = graphBounds();
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+
+    bool silent = true;
+    const auto devs = zoneDeviations (sr, silent);
 
     // Title
     g.setColour (juce::Colours::white.withAlpha (0.9f));
     g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    g.drawText ("EQScene", 14, 10, 200, 26, juce::Justification::centredLeft);
+    g.drawText ("EQScene", 14, 10, 90, 26, juce::Justification::centredLeft);
 
-    // Frequency zones with name and range
-    for (const auto& z : zones)
+    // Frequency zones with name, range and status
+    for (int z = 0; z < eqs::numZones; ++z)
     {
-        const float x1 = freqToX (z.f1, area);
-        const float x2 = freqToX (z.f2, area);
-        const auto c = juce::Colour (z.colour);
+        const float x1 = freqToX (zones[z].f1, area);
+        const float x2 = freqToX (zones[z].f2, area);
+        const auto c = juce::Colour (zones[z].colour);
 
         juce::ColourGradient grad (c.withAlpha (0.55f), 0.0f, area.getY(),
                                    c.withAlpha (0.0f), 0.0f, area.getBottom(), false);
@@ -337,13 +456,23 @@ void EQSceneEditor::paint (juce::Graphics& g)
 
         g.setColour (c.brighter (0.6f));
         g.setFont (juce::FontOptions (11.0f));
-        g.drawText (z.name, juce::Rectangle<float> (x1, area.getY() + 4, x2 - x1, 16),
+        g.drawText (zones[z].name, juce::Rectangle<float> (x1, area.getY() + 4, x2 - x1, 16),
                     juce::Justification::centred, false);
 
         g.setColour (c.brighter (0.9f).withAlpha (0.8f));
         g.setFont (juce::FontOptions (10.0f));
-        g.drawText (z.range, juce::Rectangle<float> (x1, area.getY() + 18, x2 - x1, 14),
+        g.drawText (zones[z].range, juce::Rectangle<float> (x1, area.getY() + 18, x2 - x1, 14),
                     juce::Justification::centred, false);
+
+        if (! silent)
+        {
+            const bool ok = std::abs (devs[(size_t) z]) < adviceThreshold;
+            g.setColour (ok ? juce::Colour (0xff8bd450) : juce::Colours::white);
+            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+            g.drawText (zoneStatus (devs[(size_t) z]),
+                        juce::Rectangle<float> (x1, area.getY() + 32, x2 - x1, 14),
+                        juce::Justification::centred, false);
+        }
     }
 
     // Grid
@@ -356,7 +485,6 @@ void EQSceneEditor::paint (juce::Graphics& g)
         g.drawVerticalLine ((int) freqToX (f, area), area.getY(), area.getBottom());
 
     // Spectrum: input in grey, output in teal
-    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
     std::array<float, SpectrumAnalyzer::numBins> spectrum {};
 
     if (showIn)
@@ -482,14 +610,24 @@ void EQSceneEditor::paint (juce::Graphics& g)
     g.fillRect (panel);
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     g.drawHorizontalLine (380, 0.0f, (float) getWidth());
+
+    // Suggestion line, always visible above the knobs
+    g.setColour (juce::Colours::white.withAlpha (0.92f));
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.drawText (summaryLine (devs, silent),
+                juce::Rectangle<float> (14.0f, 382.0f, (float) getWidth() - 28.0f, 18.0f),
+                juce::Justification::centredLeft, false);
 }
 
 void EQSceneEditor::resized()
 {
+    for (int i = 0; i < (int) instrumentButtons.size(); ++i)
+        instrumentButtons[(size_t) i].setBounds (110 + i * 112, 12, 110, 24);
+
     inButton.setBounds (getWidth() - 150, 12, 60, 24);
     outButton.setBounds (getWidth() - 82, 12, 60, 24);
 
-    auto controls = getLocalBounds().withTrimmedTop (386).reduced (10, 6);
+    auto controls = getLocalBounds().withTrimmedTop (402).reduced (10, 4);
     const int colW = controls.getWidth() / (eqs::numBands + 1);
 
     for (int b = 0; b < eqs::numBands; ++b)
