@@ -12,6 +12,26 @@ namespace eqs
     constexpr int lowCut = 0;
     constexpr int highShelf = 5;
 
+    // Number of frequency zones. The order must match the zones drawn in the editor.
+    constexpr int numZones = 7;
+
+    // Target shape per instrument, in dB relative to the average of the zones.
+    // Positive = that zone is usually loud on this instrument. Starting points to tune by ear.
+    struct InstrumentProfile
+    {
+        const char* name;
+        std::array<float, numZones> target;
+    };
+
+    inline const std::array<InstrumentProfile, 6> instruments = {{
+        { "General",            {  0.0f,  0.0f,  0.0f,  0.0f,  0.0f,  0.0f,  0.0f } },
+        { "Kick",               {  3.0f,  0.0f, -2.0f, -1.0f,  1.0f,  0.0f, -3.0f } },
+        { "Bajo",               {  3.0f,  2.0f, -1.0f, -1.0f,  0.0f, -2.0f, -4.0f } },
+        { "Guitarra electrica", { -3.0f,  0.0f, -1.0f,  1.0f,  1.0f,  2.0f, -1.0f } },
+        { "Guitarra acustica",  { -1.0f,  1.0f,  0.0f,  0.0f,  1.0f,  1.0f,  2.0f } },
+        { "Voz",                { -3.0f,  0.0f, -1.0f,  1.0f,  2.0f,  1.0f,  0.0f } },
+    }};
+
     inline juce::String pid (int band, const char* what)
     {
         return "b" + juce::String (band) + "_" + what;
@@ -34,7 +54,7 @@ namespace eqs
     }
 }
 
-// Collects samples, runs an FFT on each block and keeps the magnitudes in dB.
+// Collects samples, runs an FFT on each block and keeps a smoothed spectrum in dB.
 class SpectrumAnalyzer
 {
 public:
@@ -48,6 +68,7 @@ public:
             window[(size_t) i] = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::twoPi
                                                           * (float) i / (float) (fftSize - 1)));
         magnitudesDb.fill (-120.0f);
+        smoothedDb.fill (-120.0f);
     }
 
     void pushSample (float s)
@@ -80,7 +101,9 @@ private:
         for (int i = 0; i < numBins; ++i)
         {
             const float mag = fftData[(size_t) i] / (float) numBins;
-            magnitudesDb[(size_t) i] = 20.0f * std::log10 (std::max (mag, 1.0e-6f));
+            const float db = 20.0f * std::log10 (std::max (mag, 1.0e-6f));
+            smoothedDb[(size_t) i] = 0.75f * smoothedDb[(size_t) i] + 0.25f * db;
+            magnitudesDb[(size_t) i] = smoothedDb[(size_t) i];
         }
     }
 
@@ -89,6 +112,7 @@ private:
     std::array<float, fftSize> fifo {};
     std::array<float, fftSize * 2> fftData {};
     std::array<float, numBins> magnitudesDb {};
+    std::array<float, numBins> smoothedDb {};
     int fifoIndex = 0;
     juce::SpinLock spinLock;
 };
